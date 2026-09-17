@@ -1,0 +1,32 @@
+# ---- runtime state (created by setup.py) ----
+config.json
+state.json
+env.cmd
+extension/config.js
+
+# ---- runtime output ----
+logs/
+work/
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---- editors / OS ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- local scratch ----
+*.log
+*.bak
+*.tmp
+*.zip

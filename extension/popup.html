@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        width: 340px; margin: 0; padding: 12px;
+        font: 13px/1.5 system-ui, "Microsoft YaHei UI", sans-serif;
+      }
+      h1 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+      .muted { color: #8a8a8a; font-size: 12px; }
+      .card { border: 1px solid rgba(128,128,128,.35); border-radius: 6px;
+              padding: 8px 10px; margin-bottom: 8px; }
+      .title { font-weight: 600; margin-bottom: 2px; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      button {
+        font: inherit; padding: 5px 12px; border-radius: 5px; cursor: pointer;
+        border: 1px solid rgba(128,128,128,.5); background: transparent;
+        color: inherit;
+      }
+      button.primary { background: #2f6feb; border-color: #2f6feb; color: #fff;
+                       font-weight: 600; }
+      button:disabled { opacity: .5; cursor: default; }
+      .bar { height: 5px; border-radius: 3px; background: rgba(128,128,128,.25);
+             overflow: hidden; margin: 6px 0 3px; }
+      .bar > i { display: block; height: 100%; background: #2f6feb; width: 0; }
+      .job { border-top: 1px solid rgba(128,128,128,.22); padding: 6px 0; }
+      .job:first-child { border-top: 0; }
+      .err { color: #c0392b; }
+      .ok { color: #1e8e3e; }
+      code { font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <h1>Paper Pipeline</h1>
+    <div id="current"></div>
+    <div id="jobs"></div>
+    <script src="config.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

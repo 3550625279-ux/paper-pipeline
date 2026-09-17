@@ -1,0 +1,17 @@
+# Normalise line endings for everyone.
+* text=auto
+
+# Windows batch files must keep CRLF or cmd.exe mis-parses them.
+*.cmd text eol=crlf
+
+# Source stays LF.
+*.py   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.pyw  text eol=lf
+
+# Binary assets.
+*.png binary
+*.xpi binary
