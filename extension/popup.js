@@ -101,9 +101,16 @@ async function refresh() {
   const health = await send("health");
   if (!health.ok) {
     const card = el("div", "card");
-    card.append(el("div", "title", "本地服务未运行"));
-    card.append(el("div", "muted",
-      "请启动 PaperPipeline 服务（D:\\Software\\PaperPipeline\\run_service.pyw）。"));
+    const reason = (health.data && health.data.error) || "";
+    const isSetupProblem = /install\.cmd|config\.js/.test(reason);
+    card.append(el("div", "title",
+      isSetupProblem ? "插件还没配置" : "本地服务未运行"));
+    if (reason) {
+      card.append(el("div", "muted", reason));
+    } else {
+      card.append(el("div", "muted",
+        "打开项目文件夹，双击 pipeline.cmd 查看状态并启动服务。"));
+    }
     cur.append(card);
     return;
   }

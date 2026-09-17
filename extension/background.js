@@ -1,15 +1,34 @@
 /* Paper Pipeline - service worker: the only place that talks to the local service. */
 
-importScripts("config.js");
+// config.js is generated at install time and is not in version control, so a
+// fresh clone will not have it. Degrade with a clear message instead of
+// letting the service worker fail to start.
+let CONFIG = null;
+try {
+  importScripts("config.js");
+  CONFIG = typeof PP_CONFIG === "object" ? PP_CONFIG : null;
+} catch (e) {
+  CONFIG = null;
+}
 
-const BASE = "http://127.0.0.1:" + (PP_CONFIG.port || 8787);
+const NOT_SET_UP = {
+  error:
+    "插件还没配置。请先运行项目里的 install.cmd，它会生成 extension/config.js，然后在 chrome://extensions 里重新加载本扩展。",
+};
+
+function baseUrl() {
+  return "http://127.0.0.1:" + ((CONFIG && CONFIG.port) || 8787);
+}
 
 async function call(path, options = {}) {
-  const res = await fetch(BASE + path, {
+  if (!CONFIG) {
+    return { ok: false, status: 0, data: NOT_SET_UP };
+  }
+  const res = await fetch(baseUrl() + path, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-PaperPipeline-Token": PP_CONFIG.token || "",
+      "X-PaperPipeline-Token": CONFIG.token || "",
       ...(options.headers || {}),
     },
   });
@@ -24,6 +43,9 @@ async function call(path, options = {}) {
 }
 
 async function health() {
+  if (!CONFIG) {
+    return { ok: false, status: 0, data: NOT_SET_UP };
+  }
   try {
     return await call("/api/health");
   } catch (e) {
@@ -66,6 +88,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 /* Badge feedback so the toolbar shows something even with the panel closed. */
 async function refreshBadge() {
+  if (!CONFIG) {
+    chrome.action.setBadgeText({ text: "!" });
+    chrome.action.setBadgeBackgroundColor({ color: "#b23c3c" });
+    return;
+  }
   const h = await health();
   if (!h.ok) {
     chrome.action.setBadgeText({ text: "!" });

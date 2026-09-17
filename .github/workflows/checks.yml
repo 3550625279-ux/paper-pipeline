@@ -1,0 +1,97 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check every module
+        run: |
+          python -m compileall -q .
+          echo "all modules compile"
+
+      - name: Import the service modules
+        run: |
+          python - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, ".")
+          sys.path.insert(0, "vendor")
+          import config, metadata, pdfsource, zotero_api, manage, service
+          # a fresh checkout has no config.json; defaults must still load
+          cfg = config.load_config()
+          assert cfg["service"]["port"] == 8787
+          assert config.temp_collection_name() == "00 TEMP"
+          print("modules import and defaults load")
+          PY
+
+      - name: Config must survive a UTF-8 BOM
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys, tempfile, os
+          sys.path.insert(0, ".")
+          import config
+          tmp = pathlib.Path(tempfile.mkdtemp())
+          cfg = tmp / "config.json"
+          body = {"service": {"port": 9999}, "translator": {"openai_model": "x"}}
+          cfg.write_text(json.dumps(body), encoding="utf-8-sig")  # BOM on purpose
+          config.CONFIG_FILE = cfg
+          out = config.load_config()
+          assert config.port() == 9999, "BOM broke config parsing"
+          assert out["translator"]["openai_model"] == "x"
+          print("BOM tolerated")
+          PY
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax check the extension
+        run: |
+          for f in extension/background.js extension/content.js extension/popup.js; do
+            node --check "$f"
+            echo "ok $f"
+          done
+
+      - name: manifest.json is valid and self-consistent
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          ext = pathlib.Path("extension")
+          m = json.loads((ext / "manifest.json").read_text(encoding="utf-8"))
+          assert m["manifest_version"] == 3
+          for size in ("16", "32", "48", "128"):
+              p = ext / m["icons"][size]
+              assert p.is_file(), f"missing icon {p}"
+          for js in m["content_scripts"][0]["js"]:
+              assert (ext / js).is_file(), f"missing {js}"
+          # the generated config must never be committed, only its template
+          assert not (ext / "config.js").exists(), "config.js is generated, not committed"
+          assert (ext / "config.js.example").is_file(), "missing config.js.example"
+          print("manifest ok")
+          PY
+
+      - name: background script degrades when config.js is absent
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          bg = (pathlib.Path("extension") / "background.js").read_text(encoding="utf-8")
+          # a fresh clone has no config.js, so importScripts must be guarded
+          assert "try {" in bg and "catch" in bg, "importScripts is not guarded"
+          assert "NOT_SET_UP" in bg, "missing the unconfigured message"
+          print("graceful degradation present")
+          PY

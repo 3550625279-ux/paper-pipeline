@@ -1,0 +1,11 @@
+// Template for the generated config.
+//
+// setup.py / install.cmd overwrites this with real values and writes it as
+// config.js. If you are setting things up by hand, copy this file to
+// config.js and fill in the values from your state.json.
+
+var PP_CONFIG = {
+  port: 8787,
+  token: "PASTE_THE_TOKEN_FROM_state.json",
+  tempCollection: "00 TEMP"
+};
