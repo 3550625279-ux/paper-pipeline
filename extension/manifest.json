@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Paper Pipeline",
   "version": "0.1.0",
-  "description": "在论文页面一键翻译，并把原文、双语、中文译文和术语表一起入库到 Zotero。",
+  "description": "One-click paper translation into Zotero. UI is in Chinese.",
   "minimum_chrome_version": "110",
   "permissions": ["storage", "tabs", "activeTab"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
