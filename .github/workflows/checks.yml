@@ -51,6 +51,56 @@ jobs:
           print("BOM tolerated")
           PY
 
+      - name: Zotero probe must never block the health endpoint
+        run: |
+          python - <<'PY'
+          import time, sys
+          sys.path.insert(0, ".")
+          import zotero_api
+
+          # Nothing listens on Zotero's port in CI. The probe has to fail fast:
+          # /api/health is polled every couple of seconds by the extension, so a
+          # slow probe here stalls the whole UI.
+          t0 = time.time()
+          assert zotero_api.is_running() is False
+          elapsed = time.time() - t0
+          assert elapsed < 2.5, f"is_running() took {elapsed:.1f}s"
+          print(f"is_running() returned False in {elapsed:.2f}s")
+
+          # ...and repeated calls must be served from the cache.
+          t0 = time.time()
+          for _ in range(20):
+              zotero_api.is_running_cached()
+          cached = time.time() - t0
+          assert cached < 0.5, f"cached path took {cached:.2f}s for 20 calls"
+          print(f"20 cached calls in {cached:.3f}s")
+          PY
+
+      - name: Launcher exits quietly when the service is already up
+        run: |
+          python - <<'PY'
+          import socket, subprocess, sys, threading, time, pathlib
+          # Occupy a port, point the config at it, and check run_service.pyw
+          # returns immediately instead of trying to bind a second server.
+          srv = socket.socket()
+          srv.bind(("127.0.0.1", 0))
+          srv.listen(1)
+          port = srv.getsockname()[1]
+
+          cfg = pathlib.Path("config.json")
+          cfg.write_text('{"service": {"port": %d}}' % port, encoding="utf-8")
+          try:
+              proc = subprocess.run(
+                  [sys.executable, "run_service.pyw"],
+                  capture_output=True, text=True, timeout=20,
+              )
+              assert proc.returncode == 0, proc.stderr[-300:]
+              print("launcher exited cleanly while the port was busy")
+          finally:
+              cfg.unlink(missing_ok=True)
+              srv.close()
+          PY
+
   extension:
     runs-on: ubuntu-latest
     steps:

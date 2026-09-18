@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -14,12 +15,13 @@ from pathlib import Path
 
 BASE = "http://127.0.0.1:23119"
 LOCAL_USER = "/api/users/0"
+ZOTERO_PORT = 23119
 
 
 # ------------------------------------------------------------------- low level
 
 def _request(path: str, payload=None, headers=None, raw: bytes | None = None,
-             timeout: int = 180, method: str | None = None):
+             timeout: int = 180, method: str | None = None, retries: int = 3):
     body = raw if raw is not None else (
         json.dumps(payload).encode("utf-8") if payload is not None else None
     )
@@ -27,7 +29,7 @@ def _request(path: str, payload=None, headers=None, raw: bytes | None = None,
     if method is None:
         method = "POST" if body is not None else "GET"
     last = None
-    for attempt in range(3):
+    for attempt in range(max(1, retries)):
         try:
             req = urllib.request.Request(
                 BASE + path, data=body, headers=hdrs, method=method,
@@ -38,7 +40,8 @@ def _request(path: str, payload=None, headers=None, raw: bytes | None = None,
             return exc.code, exc.read().decode("utf-8", "replace")
         except Exception as exc:  # noqa: BLE001
             last = exc
-            time.sleep(1.5 * (attempt + 1))
+            if attempt + 1 < max(1, retries):
+                time.sleep(1.5 * (attempt + 1))
     return "ERR", repr(last)
 
 
@@ -50,9 +53,42 @@ def _api_get(path: str, timeout: int = 40):
         return None
 
 
+def port_open(timeout: float = 0.8) -> bool:
+    """Is anything accepting connections on Zotero's connector port?
+
+    A raw socket check is used because the full HTTP ping retries with backoff,
+    which is far too slow to sit behind a health endpoint that a browser polls
+    every couple of seconds.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex(("127.0.0.1", ZOTERO_PORT)) == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_running() -> bool:
-    status, _ = _request("/connector/ping", timeout=8)
+    """Fast check that Zotero's connector is actually answering."""
+    if not port_open():
+        return False
+    status, _ = _request("/connector/ping", timeout=4, retries=1)
     return status == 200
+
+
+_STATUS_CACHE: dict = {"at": 0.0, "value": None}
+_STATUS_TTL = 3.0
+
+
+def is_running_cached() -> bool:
+    """Same check, but shared between rapid polls (the UI polls every 2-5s)."""
+    now = time.time()
+    if _STATUS_CACHE["value"] is not None and now - _STATUS_CACHE["at"] < _STATUS_TTL:
+        return bool(_STATUS_CACHE["value"])
+    value = is_running()
+    _STATUS_CACHE["at"] = now
+    _STATUS_CACHE["value"] = value
+    return value
 
 
 def collections() -> list[dict]:

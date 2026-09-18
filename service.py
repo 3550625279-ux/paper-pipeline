@@ -384,7 +384,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {
                 "ok": True,
                 "version": VERSION,
-                "zotero": zotero_api.is_running(),
+                # cached and socket-based: this endpoint is polled every few
+                # seconds, so it must never block on an unreachable Zotero
+                "zotero": zotero_api.is_running_cached(),
                 "tempCollection": (self.state.get("tempCollection") or {}).get("name"),
             })
             return
