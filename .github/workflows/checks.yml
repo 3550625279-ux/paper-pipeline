@@ -68,6 +68,7 @@ jobs:
           print(f"is_running() returned False in {elapsed:.2f}s")
 
           # ...and repeated calls must be served from the cache.
+          zotero_api.is_running_cached()   # warm the cache first
           t0 = time.time()
           for _ in range(20):
               zotero_api.is_running_cached()
