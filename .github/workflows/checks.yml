@@ -102,6 +102,26 @@ jobs:
               srv.close()
           PY
 
+      - name: Provider errors are translated into advice, not raw traces
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, ".")
+          from service import explain_endpoint_error
+
+          cases = [
+              ("502 upstream_server_error", "502"),
+              ("Error code: 502 - provider unreachable", "模型名"),
+              ("HTTP 401 Unauthorized", "密钥"),
+              ("429 rate limit exceeded", "qps"),
+          ]
+          for raw, expect in cases:
+              out = explain_endpoint_error(raw)
+              assert expect in out, f"{raw!r} -> {out!r} lacks {expect!r}"
+              assert raw not in out or "502" in raw, "raw error leaked through"
+          print("endpoint errors are explained")
+          PY
+
   extension:
     runs-on: ubuntu-latest
     steps:

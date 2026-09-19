@@ -15,6 +15,8 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -126,6 +128,72 @@ def resolve_temp_collection(state: dict) -> int | None:
     return None
 
 
+def explain_endpoint_error(message: str) -> str:
+    """Turn a raw provider error into something a user can act on."""
+    low = (message or "").lower()
+    if "502" in low or "provider unreachable" in low or "upstream" in low:
+        return (
+            "翻译接口返回 502：上游不可达。通常是 config.json 里的模型名已经失效"
+            "（服务方的模型目录变了）。打开 config.json 检查 translator.openai_model，"
+            "对照接口的 /models 列表；运行 python selftest.py 可以看到当前配置。"
+        )
+    if "401" in low or "403" in low or "unauthorized" in low or "invalid api key" in low:
+        return (
+            "翻译接口拒绝了密钥（401/403）。检查 config.json 里的 "
+            "translator.openai_api_key 是否有效或已过期。"
+        )
+    if "429" in low or "rate limit" in low:
+        return (
+            "翻译接口限流（429）。把 config.json 里的 translator.qps 调小"
+            "（比如 3），然后重新提交。"
+        )
+    if "connection" in low and ("refused" in low or "error" in low):
+        return (
+            "连不上翻译接口。确认 config.json 里的 translator.openai_base_url "
+            "指向的服务正在运行。"
+        )
+    if "timeout" in low or "timed out" in low:
+        return (
+            "翻译接口超时。可能是网络不稳或上游太慢，稍后重试；"
+            "如果经常发生，把 translator.qps 调小。"
+        )
+    return message or "翻译失败，原因未知"
+
+
+def preflight_model(cfg: dict, timeout: int = 10) -> str | None:
+    """Warn when the configured model is not in the endpoint's catalogue.
+
+    Endpoints do not always implement /models, and a model can be routable
+    without being listed, so this is advisory: it returns a warning string
+    rather than blocking. The point is to fail in ten seconds with a clear
+    message instead of two minutes into a job with an opaque 502.
+    """
+    base = (cfg.get("openai_base_url") or "").rstrip("/")
+    model = (cfg.get("openai_model") or "").strip()
+    if not base or not model:
+        return None
+    url = base + "/models"
+    try:
+        req = urllib.request.Request(url, headers={
+            "Authorization": "Bearer " + (cfg.get("openai_api_key") or ""),
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return None  # endpoint does not expose a catalogue; carry on
+    ids = [str(m.get("id")) for m in (body.get("data") or []) if m.get("id")]
+    if not ids or model in ids:
+        return None
+    preview = ", ".join(ids[:8])
+    return (
+        f"配置的模型「{model}」不在接口的模型列表里。"
+        f"可用的是：{preview}"
+        + ("…" if len(ids) > 8 else "")
+        + "。请修改 config.json 的 translator.openai_model。"
+    )
+
+
 def run_job(state: dict, job: dict) -> None:
     hint = job.get("hint") or {}
     work = config.WORK_DIR / job["id"]
@@ -165,6 +233,12 @@ def run_job(state: dict, job: dict) -> None:
             "openai_base_url / openai_api_key / openai_model"
         )
     job_file = work / "job.json"
+    warning = preflight_model(cfg)
+    if warning:
+        job["log"].append(warning)
+        touch(state, job)
+        raise RuntimeError(warning)
+
     job_file.write_text(json.dumps({
         "translatorConfig": cfg,
         "workDir": str(work),
@@ -193,6 +267,7 @@ def run_job(state: dict, job: dict) -> None:
         cwd=str(work), creationflags=subprocess.CREATE_NO_WINDOW,
     )
     outcome: dict = {}
+    worker_error = ""
     for line in proc.stdout:
         line = (line or "").strip()
         if not line.startswith("{"):
@@ -221,7 +296,8 @@ def run_job(state: dict, job: dict) -> None:
         elif etype == "done":
             outcome = ev
         elif etype == "error":
-            job["log"].append("worker: " + str(ev.get("message")))
+            worker_error = str(ev.get("message") or "")
+            job["log"].append("worker: " + worker_error)
             if ev.get("trace"):
                 job["log"].append(str(ev["trace"])[-600:])
             touch(state, job)
@@ -238,7 +314,11 @@ def run_job(state: dict, job: dict) -> None:
         job["log"].append("stderr: " + err_tail.strip()[-400:])
 
     if not outcome:
-        raise RuntimeError("翻译未产出结果")
+        # Never report a bare "no output": the worker usually told us why.
+        if worker_error:
+            raise RuntimeError(explain_endpoint_error(worker_error))
+        raise RuntimeError("翻译没有产出结果，且没有收到错误信息。"
+                           "请看 work/<任务号>/worker.err.log 的最后几行。")
 
     job["files"] = outcome.get("files") or {}
     job["pages"] = outcome.get("pages")
