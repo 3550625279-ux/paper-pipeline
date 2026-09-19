@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -28,6 +29,38 @@ def check_health(port: int):
             return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception as exc:  # noqa: BLE001
         return {"_error": str(exc)}
+
+
+def check_model(ts: dict):
+    """Ask the endpoint whether the configured model still exists.
+
+    Returns ("ok"|"missing"|"unknown", detail).
+    """
+    base = (ts.get("openai_base_url") or "").rstrip("/")
+    model = (ts.get("openai_model") or "").strip()
+    if not base or not model:
+        return "unknown", "未配置"
+    try:
+        req = urllib.request.Request(base + "/models", headers={
+            "Authorization": "Bearer " + (ts.get("openai_api_key") or ""),
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        return "unknown", "接口返回 %s" % exc.code
+    except Exception as exc:  # noqa: BLE001
+        return "unknown", repr(exc)[:60]
+
+    ids = [str(m.get("id")) for m in (body.get("data") or []) if m.get("id")]
+    if not ids:
+        return "unknown", "接口没有返回模型列表"
+    if model in ids:
+        return "ok", model
+    return "missing", (
+        "模型「%s」不在接口目录里！可用：%s%s"
+        % (model, ", ".join(ids[:8]), " …" if len(ids) > 8 else "")
+    )
 
 
 def main() -> int:
@@ -75,6 +108,16 @@ def main() -> int:
         print(OK + f"模型 {ts['openai_model']}")
         print("       密钥 " + ts["openai_api_key"][:6] + "…" + str(len(
             ts["openai_api_key"])) + " 字符")
+        # Provider catalogues change; a stale model name fails every job with a
+        # 502 that looks like a network problem. Catch it here instead.
+        status, note = check_model(ts)
+        if status == "ok":
+            print(OK + "模型在接口目录中：" + note)
+        elif status == "missing":
+            print(BAD + note)
+            problems += 1
+        else:
+            print("         模型检查跳过（" + note + "）")
 
     # ---------------------------------------------------------------- zotero
     print()
