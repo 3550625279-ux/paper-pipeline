@@ -164,21 +164,36 @@ def run_job(job: dict) -> int:
 
     emit({"type": "phase", "phase": "detect", "message": "分析论文结构……"})
 
+    # Page-level selection keeps both boundary pages: they may contain prose.
+    import fitz
+    with fitz.open(str(local)) as doc:
+        pages = doc.page_count
     pages_str = None
-    ref_page = None
+    selected_pages = list(range(1, pages + 1))
     if cfg.get("stop_at_references", True):
         try:
-            from detector import detect_reference_start
+            from detector import detect_reference_start, detect_appendix_after_references
             ref_page = detect_reference_start(str(local))
+            appendix_page = (detect_appendix_after_references(str(local), ref_page)
+                             if ref_page else None)
+            if ref_page and appendix_page and ref_page <= appendix_page <= pages:
+                selected_pages = sorted(set(range(1, ref_page + 1)) |
+                                        set(range(appendix_page, pages + 1)))
+                if appendix_page > ref_page + 1:
+                    pages_str = f"1-{ref_page},{appendix_page}-{pages}"
+                emit({"type": "log", "message":
+                      f"参考文献从第 {ref_page} 页开始，附录从第 {appendix_page} 页开始；"
+                      f"翻译 {pages_str or '全文（边界页相邻）'}"})
+            elif ref_page:
+                emit({"type": "log", "message":
+                      f"参考文献从第 {ref_page} 页开始，未能可靠定位后续附录；"
+                      "为避免漏翻，翻译全文"})
+            else:
+                emit({"type": "log", "message": "未识别到参考文献边界，翻译全文"})
         except Exception as exc:  # noqa: BLE001
-            emit({"type": "log", "message": f"参考文献检测失败：{exc}"})
-            ref_page = None
-        if ref_page:
-            pages_str = f"1-{ref_page}"
-            emit({"type": "log",
-                  "message": f"参考文献从第 {ref_page} 页开始，翻译 1-{ref_page}"})
-        else:
-            emit({"type": "log", "message": "未识别到参考文献边界，翻译全文"})
+            selected_pages = list(range(1, pages + 1))
+            pages_str = None
+            emit({"type": "log", "message": f"论文结构检测失败，翻译全文：{exc}"})
 
     stem = local.stem
     t0 = time.time()
@@ -193,9 +208,8 @@ def run_job(job: dict) -> int:
         emit({"type": "phase", "phase": "quality", "message": "检查漏翻……"})
         try:
             from quality_check import check_untranslated_prose
-            check_pages = list(range(1, (ref_page or 999) + 1))
             untranslated = check_untranslated_prose(
-                str(files["mono"]), pages_to_check=check_pages,
+                str(files["mono"]), pages_to_check=selected_pages,
             )
         except Exception as exc:  # noqa: BLE001
             emit({"type": "log", "message": f"漏翻检测失败：{exc}"})
@@ -221,26 +235,19 @@ def run_job(job: dict) -> int:
             from quality_check import check_untranslated_prose
             untranslated = check_untranslated_prose(
                 str(files.get("mono", "")) if files.get("mono") else "",
-                pages_to_check=list(range(1, (ref_page or 999) + 1)),
+                pages_to_check=selected_pages,
             ) if files.get("mono") else []
         except Exception:  # noqa: BLE001
             untranslated = []
 
     elapsed = time.time() - t0
-    pages = 0
-    try:
-        import fitz
-        with fitz.open(str(local)) as doc:
-            pages = doc.page_count
-    except Exception:  # noqa: BLE001
-        pass
 
     emit({
         "type": "done",
         "files": {k: str(v) for k, v in files.items()},
         "original": str(local),
         "pages": pages,
-        "translatedPages": ref_page or pages,
+        "translatedPages": len(selected_pages),
         "untranslated": len(untranslated),
         "seconds": round(elapsed, 1),
     })

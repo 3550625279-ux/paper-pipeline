@@ -59,9 +59,10 @@ OpenAlex, so it is authoritative rather than guessed.
   to JSON-LD and URL patterns.
 - **Real progress.** The panel shows the current stage and a live percentage,
   not a spinner. You can close the tab; the job keeps running.
-- **Skips the bibliography.** It finds where references start and translates only
-  the body. Cheaper and easier to read. Falls back to full text if detection
-  fails.
+- **Includes appendices.** When it identifies an appendix after the references,
+  it translates the body and appendix while skipping intervening bibliography
+  pages. Boundary pages are translated in full. If detection is uncertain, it
+  translates the entire paper to avoid omissions, which can increase API costs.
 - **Verifies its own output.** It scans the translated PDF page by page for
   English prose left behind, and retries in compatibility mode when it finds any.
 - **Reuses what you already downloaded.** If the PDF is already in your Downloads
@@ -163,7 +164,7 @@ the service with pipeline.cmd restart.
 | term_qps | 10 | Separate rate limit for the terminology pass |
 | term_pool_max_workers | 20 | Concurrency for the terminology pass |
 | watermark_output_mode | no_watermark | no_watermark, watermark, or both |
-| stop_at_references | true | Translate only up to the bibliography |
+| stop_at_references | true | Skip intervening bibliography pages when a later appendix is identified; otherwise translate the full paper |
 
 **On qps:** raise it and you go faster until you hit rate limits. 10 is fine for
 most paid plans; drop to 2 to 4 on free tiers. A 429 in the logs means it is too

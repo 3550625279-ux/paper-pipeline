@@ -391,6 +391,90 @@ def detect_reference_start_detailed(pdf_path: str, *, detect_appendix: bool = Fa
     return result
 
 
+def detect_appendix_after_references(pdf_path: str, ref_page: int) -> int | None:
+    """Return the 1-based page of an appendix following the references.
+
+    Detection is deliberately conservative: a missed heading should cause the
+    caller to translate the uncertain tail, rather than silently drop it.
+    Pages containing both references and an appendix must be translated whole.
+    """
+    if not isinstance(ref_page, int) or isinstance(ref_page, bool) or ref_page < 1:
+        return None
+
+    with fitz.open(pdf_path) as doc:
+        if ref_page > len(doc):
+            return None
+        pages = {i: _extract_lines_from_page(doc[i])
+                 for i in range(ref_page - 1, len(doc))}
+
+    all_lines = [line for page in pages.values() for line in page]
+    median = _compute_median_font_size(all_lines)
+
+    def is_toc(lines: list[dict]) -> bool:
+        texts = [line["text"].lower() for line in lines]
+        return (any(text in _TOC_HEADINGS for text in texts)
+                or sum(bool(_TOC_DOTLINE_RE.search(text)) for text in texts) >= 5)
+
+    def heading_like(line: dict) -> bool:
+        text = line["text"].strip()
+        return (0 < len(text) <= 100 and not _TOC_DOTLINE_RE.search(text)
+                and not text.endswith((".", ",", ";", "?", "!"))
+                and (line["is_bold"] or not median
+                     or line["font_size"] >= median * 1.05))
+
+    def paired_title(lines: list[dict], index: int) -> bool:
+        """Recognize a separate letter and title on the same baseline."""
+        if index + 1 >= len(lines):
+            return False
+        marker, title = lines[index], lines[index + 1]
+        x0, y0, x1, y1 = marker["bbox"]
+        tx0, ty0, _, ty1 = title["bbox"]
+        same_baseline = abs(y0 - ty0) <= max(2.0, (y1 - y0) * 0.3)
+        close = x1 <= tx0 <= x1 + max(50.0, marker["font_size"] * 4)
+        return (same_baseline and close and heading_like(marker)
+                and heading_like(title) and bool(re.search(r"[A-Za-z]", title["text"]))
+                and abs(marker["font_size"] - title["font_size"]) <= 1.0)
+
+    # On the reference-start page, only inspect lines after the heading.
+    # PyMuPDF preserves the source's reading order, including its columns.
+    first_lines = pages[ref_page - 1]
+    ref_indices = [i for i, line in enumerate(first_lines)
+                   if _is_heading_match(line["text"])]
+    first_offset = ref_indices[-1] + 1 if ref_indices else 0
+
+    for pi, lines in pages.items():
+        if is_toc(lines):
+            continue
+        offset = first_offset if pi == ref_page - 1 else 0
+        for index in range(offset, len(lines)):
+            line = lines[index]
+            text = line["text"].strip()
+            if _is_appendix_match(text) and heading_like(line):
+                return pi + 1
+
+            # ACL-style papers often use only "A  Related Work". Require
+            # both a title and a subsequent A.1 subsection or B section so a
+            # lone author initial, table label or citation is not enough.
+            separate_heading = text == "A" and paired_title(lines, index)
+            combined_heading = bool(re.fullmatch(r"A\s+[A-Za-z][^.!?]{1,90}", text)) and heading_like(line)
+            if not (separate_heading or combined_heading):
+                continue
+            later = lines[index + (2 if separate_heading else 1):]
+            for later_page in range(pi + 1, min(pi + 4, len(pages) + ref_page - 1)):
+                later.extend(pages.get(later_page, []))
+            has_subsection = any(re.match(r"^A\.\d+(?:\s|$)", item["text"])
+                                 and heading_like(item) for item in later)
+            has_next_section = any(
+                (item["text"] == "B" and paired_title(later, j)) or
+                (bool(re.fullmatch(r"B\s+[A-Za-z][^.!?]{1,90}", item["text"]))
+                 and heading_like(item))
+                for j, item in enumerate(later)
+            )
+            if has_subsection or has_next_section:
+                return pi + 1
+    return None
+
+
 # ── CLI 测试入口 ──────────────────────────────────────────────
 
 if __name__ == "__main__":
